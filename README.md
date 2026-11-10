@@ -73,6 +73,24 @@ JF_USER (your username in Artifactory)
 
 PRIVATE_KEY (the key used to sign evidence)
 
+### Artifactory Repositories
+
+The workflow expects the following repositories to already exist in Artifactory. The build fails with `not found` errors when pulling base images if they are missing.
+
+| Repository Key | Type | Package Type | Notes |
+|----------------|------|--------------|-------|
+| example-project-docker-remote | Remote | Docker | Upstream `https://registry-1.docker.io/`. Used to pull the `golang` and `alpine` base images. |
+| example-project-docker-dev-local | Local | Docker | Where the built image is stored. |
+| example-project-docker-dev-virtual | Virtual | Docker | Members: the local and remote repos above. Set the local repo as the default deployment repository. |
+| example-project-generic-dev | Local | Generic | Where `README.md` is uploaded. |
+
+### Signing Keys
+
+Two different keys are used, and they are configured in different places.
+
+* **Evidence signing key** - `PRIVATE_KEY` (GitHub secret) signs every evidence record. Upload the matching public key to the JFrog Platform and note its alias. The workflow passes this alias with `--key-alias` (the example workflow uses `evd-key-cartert`; change it to your alias). Without `--key-alias`, evidence is created but is not shown as **verified**.
+* **Release Bundle signing key** - the Create release bundle step uses `--signing-key PGP-RSA-2048`. Create a GPG key pair with that alias under **Administration > Security > Keys Management** (or `POST /artifactory/api/security/keypair`), or change the workflow to use a different alias. The key pair must be **protected by a passphrase**. An unprotected key fails with `Failed to create the signature`.
+
 ### GitHub Secrets
 
 | Secret Name | Description | Example Value |
