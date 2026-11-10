@@ -91,6 +91,22 @@ Two different keys are used, and they are configured in different places.
 * **Evidence signing key** - `PRIVATE_KEY` (GitHub secret) signs every evidence record. Upload the matching public key to the JFrog Platform and note its alias. The workflow passes this alias with `--key-alias` (the example workflow uses `evd-key-cartert`; change it to your alias). Without `--key-alias`, evidence is created but is not shown as **verified**.
 * **Release Bundle signing key** - the Create release bundle step uses `--signing-key PGP-RSA-2048`. Create a GPG key pair with that alias under **Administration > Security > Keys Management** (or `POST /artifactory/api/security/keypair`), or change the workflow to use a different alias. The key pair must be **protected by a passphrase**. An unprotected key fails with `Failed to create the signature`.
 
+### Stages (QA and PROD)
+
+`build-and-deploy.yml` promotes the Release Bundle to `QA` and then `PROD`. A promotion fails with `Invalid target stage: QA; no repositories assigned` unless each stage has repositories that can receive the bundle's contents.
+
+* Create a Docker repo and a generic local repo for each stage (for example `example-project-docker-qa-local`, `example-project-generic-qa-local`, `example-project-docker-prod-local` and `example-project-generic-prod-local`).
+* Assign each repo to its stage by setting the repo's **Environments** (`"environments": ["QA"]` or `["PROD"]` in the repository configuration).
+* `QA` and `PROD` are global stages that other projects on the platform may share. Adding repos to them does not remove anything that is already there.
+
+### Xray Indexing for the Release Bundle
+
+The PROD promotion is gated by `policy/policy.rego`, which requires `cyclonedx-vex`, `testing-results` and `promotion` evidence on the Release Bundle. The `cyclonedx-vex` evidence is produced by Xray, so Xray must be enabled and the Release Bundle must be indexed. Without it the policy returns `approved: false` and the `Promote to Production` step fails.
+
+* In Xray, add the bundle under **Indexed Resources > Release Bundles v2**, or call the API. Note that `PUT` replaces the whole indexed list, so include any bundles that are already indexed:
+  `PUT /xray/api/v1/binMgr/default/release_bundle_v2` with `{"indexed_release_bundle_v2": ["[release-bundles-v2]/<BUNDLE_NAME>-deploy"]}`
+* `build-and-deploy.yml` uses `<BUILD_NAME>-deploy` and `<BUNDLE_NAME>-deploy` so it does not collide with `build.yml`. Both workflows count `github.run_number` separately, and a shared bundle name would fail with `409 Conflict`.
+
 ### GitHub Secrets
 
 | Secret Name | Description | Example Value |
