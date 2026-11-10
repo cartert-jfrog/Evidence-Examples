@@ -7,6 +7,12 @@ permissions:
   id-token: write
   contents: read
 
+# Separate names so this workflow does not collide with build.yml, which
+# shares BUILD_NAME/BUNDLE_NAME but has its own github.run_number counter.
+env:
+  DEPLOY_BUILD_NAME: ${{ vars.BUILD_NAME }}-deploy
+  DEPLOY_BUNDLE_NAME: ${{ vars.BUNDLE_NAME }}-deploy
+
 jobs:
   Docker-build-with-evidence:
     runs-on: ubuntu-latest
@@ -42,47 +48,47 @@ jobs:
           docker build --build-arg REPO_URL=${REPO_URL} -f Dockerfile . \
           --tag ${REPO_URL}/example-project-app:${{ github.run_number }} \
           --output=type=image --platform linux/amd64 --metadata-file=build-metadata --push
-          jf rt build-docker-create example-project-docker-dev --image-file build-metadata --build-name ${{ vars.BUILD_NAME }} --build-number ${{ github.run_number }}
+          jf rt build-docker-create example-project-docker-dev-local --image-file build-metadata --build-name ${{ env.DEPLOY_BUILD_NAME }} --build-number ${{ github.run_number }}
 
       - name: Evidence on docker
         run: |
           echo '{ "actor": "${{ github.actor }}", "date": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'" }' > sign.json
           jf evd create --package-name example-project-app --package-version ${{ github.run_number }} --package-repo-name example-project-docker-dev-local \
-            --key "${{ secrets.PRIVATE_KEY }}"  --key-alias KEY-ALIAS \
+            --key "${{ secrets.PRIVATE_KEY }}"  --key-alias evd-key-cartert \
             --predicate ./sign.json --predicate-type https://jfrog.com/evidence/signature/v1 
           echo '🔎 Evidence attached: `signature` 🔏 ' 
 
       - name: Upload readme file
         run: |
-          jf rt upload ./README.md example-project-generic-dev/readme/${{ github.run_number }}/ --build-name ${{ vars.BUILD_NAME }} --build-number ${{ github.run_number }}
+          jf rt upload ./README.md example-project-generic-dev/readme/${{ github.run_number }}/ --build-name ${{ env.DEPLOY_BUILD_NAME }} --build-number ${{ github.run_number }}
           jf evd create --subject-repo-path example-project-generic-dev/readme/${{ github.run_number }}/README.md \
-            --key "${{ secrets.PRIVATE_KEY }}" --key-alias KEY-ALIAS  \
+            --key "${{ secrets.PRIVATE_KEY }}" --key-alias evd-key-cartert  \
             --predicate ./sign.json --predicate-type https://jfrog.com/evidence/signature/v1
 
       - name: Collecting Information from Git
-        run: jf rt build-add-git ${{ vars.BUILD_NAME }} ${{ github.run_number }}
+        run: jf rt build-add-git ${{ env.DEPLOY_BUILD_NAME }} ${{ github.run_number }}
 
       - name: Collecting Environment Variables
-        run: jf rt build-collect-env ${{ vars.BUILD_NAME }} ${{ github.run_number }}
+        run: jf rt build-collect-env ${{ env.DEPLOY_BUILD_NAME }} ${{ github.run_number }}
 
       - name: Publish build info
-        run: jfrog rt build-publish ${{ vars.BUILD_NAME }} ${{ github.run_number }}
+        run: jfrog rt build-publish ${{ env.DEPLOY_BUILD_NAME }} ${{ github.run_number }}
 
       - name: Sign build evidence
         run: |
           echo '{ "actor": "${{ github.actor }}", "date": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'" }' > sign.json
-          jf evd create --build-name ${{ vars.BUILD_NAME }} --build-number ${{ github.run_number }} \
+          jf evd create --build-name ${{ env.DEPLOY_BUILD_NAME }} --build-number ${{ github.run_number }} \
             --predicate ./sign.json --predicate-type https://jfrog.com/evidence/build-signature/v1 \
-            --key "${{ secrets.PRIVATE_KEY }}"  --key-alias KEY-ALIAS
+            --key "${{ secrets.PRIVATE_KEY }}"  --key-alias evd-key-cartert
           echo '🔎 Evidence attached: `build-signature` 🔏 ' >> $GITHUB_STEP_SUMMARY
 
       - name: Create release bundle
         run: |
-          echo '{ "files": [ {"build": "'"${{ vars.BUILD_NAME }}/${{ github.run_number }}"'" } ] }' > bundle-spec.json
-          jf release-bundle-create ${{ vars.BUNDLE_NAME }} ${{ github.run_number }} --signing-key PGP-RSA-2048 --spec bundle-spec.json --sync=true
-          NAME_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ vars.BUNDLE_NAME }}'&bundleToFlash='${{ vars.BUNDLE_NAME }}'&repositoryKey=release-bundles-v2&activeKanbanTab=promotion'
-          VER_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ vars.BUNDLE_NAME }}'&bundleToFlash='${{ vars.BUNDLE_NAME }}'&releaseBundleVersion='${{ github.run_number }}'&repositoryKey=release-bundles-v2&activeVersionTab=Version%20Timeline&activeKanbanTab=promotion'
-          echo '📦 Release bundle ['${{ vars.BUNDLE_NAME }}']('${NAME_LINK}'):['${{ github.run_number }}']('${VER_LINK}') created' >> $GITHUB_STEP_SUMMARY
+          echo '{ "files": [ {"build": "'"${{ env.DEPLOY_BUILD_NAME }}/${{ github.run_number }}"'" } ] }' > bundle-spec.json
+          jf release-bundle-create ${{ env.DEPLOY_BUNDLE_NAME }} ${{ github.run_number }} --signing-key PGP-RSA-2048 --spec bundle-spec.json --sync=true
+          NAME_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ env.DEPLOY_BUNDLE_NAME }}'&bundleToFlash='${{ env.DEPLOY_BUNDLE_NAME }}'&repositoryKey=release-bundles-v2&activeKanbanTab=promotion'
+          VER_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ env.DEPLOY_BUNDLE_NAME }}'&bundleToFlash='${{ env.DEPLOY_BUNDLE_NAME }}'&releaseBundleVersion='${{ github.run_number }}'&repositoryKey=release-bundles-v2&activeVersionTab=Version%20Timeline&activeKanbanTab=promotion'
+          echo '📦 Release bundle ['${{ env.DEPLOY_BUNDLE_NAME }}']('${NAME_LINK}'):['${{ github.run_number }}']('${VER_LINK}') created' >> $GITHUB_STEP_SUMMARY
 
 
   Promote-to-qa-and-test:
@@ -98,17 +104,17 @@ jobs:
           
       - name: Promote to QA
         run: |
-          jf release-bundle-promote ${{ vars.BUNDLE_NAME }} ${{ github.run_number }} QA --signing-key PGP-RSA-2048 --sync=true
+          jf release-bundle-promote ${{ env.DEPLOY_BUNDLE_NAME }} ${{ github.run_number }} QA --signing-key PGP-RSA-2048 --sync=true
           echo "🚀 Succesfully promote to \`QA\` environemnt" >> $GITHUB_STEP_SUMMARY
 
       - name: Evidence on release-bundle
         run: |
           echo '{ "actor": "${{ github.actor }}", "date": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "test": "CI test", "result": "success" }' > test_evidence.json
-          JF_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ vars.BUNDLE_NAME }}'&bundleToFlash='${{ vars.BUNDLE_NAME }}'&releaseBundleVersion='${{ github.run_number }}'&repositoryKey=release-bundles-v2&activeVersionTab=Version%20Timeline&activeKanbanTab=promotion'
-          echo 'Test on Release bundle ['${{ vars.BUNDLE_NAME }}':'${{ github.run_number }}']('${JF_LINK}') success' >> $GITHUB_STEP_SUMMARY
-          jf evd create --release-bundle ${{ vars.BUNDLE_NAME }} --release-bundle-version ${{ github.run_number }} \
+          JF_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ env.DEPLOY_BUNDLE_NAME }}'&bundleToFlash='${{ env.DEPLOY_BUNDLE_NAME }}'&releaseBundleVersion='${{ github.run_number }}'&repositoryKey=release-bundles-v2&activeVersionTab=Version%20Timeline&activeKanbanTab=promotion'
+          echo 'Test on Release bundle ['${{ env.DEPLOY_BUNDLE_NAME }}':'${{ github.run_number }}']('${JF_LINK}') success' >> $GITHUB_STEP_SUMMARY
+          jf evd create --release-bundle ${{ env.DEPLOY_BUNDLE_NAME }} --release-bundle-version ${{ github.run_number }} \
             --predicate ./test_evidence.json --predicate-type https://jfrog.com/evidence/testing-results/v1 \
-            --key "${{ secrets.PRIVATE_KEY }}" --key-alias KEY-ALIAS
+            --key "${{ secrets.PRIVATE_KEY }}" --key-alias evd-key-cartert
           echo '🔎 Evidence attached: integration-test 🧪 ' >> $GITHUB_STEP_SUMMARY
 
 
@@ -134,7 +140,7 @@ jobs:
 
       - name: Call GraphQL
         run: |
-          ./scripts/graphql.sh ${{ vars.ARTIFACTORY_URL }} ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }} release-bundles-v2 ${{ vars.BUNDLE_NAME }} ${{ github.run_number }} ./evidence-graph.json
+          ./scripts/graphql.sh ${{ vars.ARTIFACTORY_URL }} ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }} release-bundles-v2 ${{ env.DEPLOY_BUNDLE_NAME }} ${{ github.run_number }} ./evidence-graph.json
           cat ./evidence-graph.json
 
       - name: Run policy
@@ -147,10 +153,10 @@ jobs:
       - name: Promote to Production
         run: |
           if [ "${{ env.RESULT }}" == "true" ]; then
-            jf evd create --key "${{ secrets.PRIVATE_KEY }}" --key-alias KEY-ALIAS \
-              --release-bundle ${{ vars.BUNDLE_NAME }} --release-bundle-version ${{ github.run_number }} \
+            jf evd create --key "${{ secrets.PRIVATE_KEY }}" --key-alias evd-key-cartert \
+              --release-bundle ${{ env.DEPLOY_BUNDLE_NAME }} --release-bundle-version ${{ github.run_number }} \
               --predicate ./policy.json --predicate-type https://jfrog.com/evidence/approval/v1
-            jf release-bundle-promote ${{ vars.BUNDLE_NAME }} ${{ github.run_number }} PROD --signing-key PGP-RSA-2048  --sync=true
+            jf release-bundle-promote ${{ env.DEPLOY_BUNDLE_NAME }} ${{ github.run_number }} PROD --signing-key PGP-RSA-2048  --sync=true
             echo "🚀 Succesfully promote to \`PROD\` environemnt" >> $GITHUB_STEP_SUMMARY
           else
             echo "Fail promotion policy check" >> $GITHUB_STEP_SUMMARY
